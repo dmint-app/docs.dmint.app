@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port 3334",
     "build": "vite build",
-    "start": "node dist/rsc/index.js"
+    "start": "node dist/rsc/index.js",
+    "deploy": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@holocron.so/vite": "^0.35.2",

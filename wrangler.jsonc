@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "docs-dmint-app",
+  "main": "./dist/rsc/index.js",
+  "compatibility_date": "2026-09-21",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application"
+  }
+}
