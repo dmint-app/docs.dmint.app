@@ -1,0 +1,231 @@
+---
+title: "Quickstart"
+description: "Protect a real tool, intercept unauthorized calls, and approve sensitive actions in under 5 minutes."
+icon: "bolt"
+---
+
+# 5-Minute Quickstart
+
+This walkthrough takes you from zero to a fully protected tool with deterministic authorization and human approvals.
+
+<Note>
+**Time required**: ~5 minutes.  
+**Prerequisites**: Python 3.10+ installed on Linux, macOS, or WSL.
+</Note>
+
+---
+
+## Step 1: Install Dmint
+
+Install the complete Dmint suite from PyPI:
+
+```bash
+pip install dmint dmint-cli dmint-mcp dmint-dashboard dmint-skills
+```
+
+Verify your installation:
+
+```bash
+dmint --version
+# dmint 1.1.0
+```
+
+---
+
+## Step 2: Define Security Rules (`access.md`)
+
+Create a plain text file named `access.md` in your project folder specifying your access requirements:
+
+```markdown title="access.md"
+# Database Access Security Policy
+
+- The agent is allowed to run SELECT queries on any database table.
+- Any UPDATE, INSERT, or ALTER TABLE operation requires explicit human approval.
+- Any DROP TABLE or DELETE operation is strictly denied.
+```
+
+Now compile this into a verified, schema-compliant `policy.json`:
+
+```bash
+dmint create-policy -f access.md -o policy.json -y
+```
+
+Validate the generated policy offline (LLM-free):
+
+```bash
+dmint verify-policy policy.json
+```
+
+Output:
+```text
+✓ Verified policy.json: 3 rule(s)
+  [ALLOW] tool='database', action='select', resource='*'
+  [APPROVAL_REQUIRED] tool='database', action='update', resource='*'
+  [DENY] tool='database', action='drop', resource='*'
+```
+
+---
+
+## Step 3: Protect Your Tool
+
+Choose how you want to connect Dmint to your project:
+
+<Tabs>
+  <Tab title="Option A: In Python Code (Direct Decorator)">
+    Protect any Python function with the `@dmint.protected` decorator. Dmint intercepts the call, evaluates policy, and manages SQLite persistence automatically.
+
+    Create `app.py`:
+
+    ```python title="app.py"
+    from dmint import Dmint, Policy, SQLiteApprovalStore
+
+    # 1. Initialize store and policy
+    store = SQLiteApprovalStore("./approvals.sqlite3")
+    policy = Policy.from_file("policy.json")
+    dmint = Dmint(policy=policy, store=store, agent_id="agent-local")
+
+    # 2. Protect functions with capabilities: tool.action
+    @dmint.protected("database.select")
+    def run_query(query: str):
+        return f"Query executed: {query}"
+
+    @dmint.protected("database.update")
+    def update_record(table: str, row_id: int, value: str):
+        return f"Updated {table} row {row_id} with {value}"
+
+    @dmint.protected("database.drop")
+    def drop_table(table: str):
+        return f"Dropped {table}"
+
+    # --- Test 1: ALLOW rule executes immediately ---
+    print("1. Running SELECT:")
+    result = run_query("SELECT * FROM users")
+    print("   ✓", result)
+
+    # --- Test 2: APPROVAL_REQUIRED halts and records pending approval ---
+    print("\n2. Attempting UPDATE:")
+    try:
+        update_record("users", 42, "admin")
+    except Exception as exc:
+        print("   ⏸️ Caught expected error:", exc)
+        print("   -> Request persisted in ./approvals.sqlite3 awaiting approval.")
+    ```
+
+    Run the script:
+
+    ```bash
+    python app.py
+    ```
+  </Tab>
+
+  <Tab title="Option B: Model Context Protocol (MCP Gateway)">
+    If your AI agent uses MCP (such as Cursor, Claude Code, or Antigravity), wrap your downstream MCP server using `dmint-mcp`.
+
+    1. Generate an MCP protection config for your server:
+       ```bash
+       dmint create-mcp-policy \
+         --command npx \
+         --args "-y @modelcontextprotocol/server-postgres postgresql://localhost/mydb" \
+         --integration-id postgres \
+         -f access.md \
+         -o policy.json \
+         --config-output mcp_protection.json \
+         --non-interactive -y
+       ```
+
+    2. Run the secure gateway:
+       ```bash
+       python -m dmint_mcp run --config mcp_protection.json --db-path ./approvals.sqlite3
+       ```
+  </Tab>
+</Tabs>
+
+---
+
+## Step 4: Review in Human Approval Dashboard
+
+Start the local web dashboard:
+
+```bash
+dmint dashboard --db-path ./approvals.sqlite3 --port 8080
+```
+
+Open your browser at **[http://127.0.0.1:8080](http://127.0.0.1:8080)**:
+
+<Steps>
+  <Step title="Inspect Pending Requests">
+    You will see the pending `database.update` request containing the exact arguments (`table: "users"`, `row_id: 42`, `value: "admin"`).
+  </Step>
+  <Step title="Click 'Approve'">
+    Dmint's `LocalApprovalAuthority` cryptographically signs an Ed25519 approval assertion bound to that exact request fingerprint.
+  </Step>
+</Steps>
+
+---
+
+## Step 5: Test Execution & Replay Defense
+
+Now that the request has been approved, re-run or retry the action with the approval credential:
+
+```python title="retry.py"
+from dmint import Dmint, Policy, SQLiteApprovalStore
+
+store = SQLiteApprovalStore("./approvals.sqlite3")
+policy = Policy.from_file("policy.json")
+dmint = Dmint(policy=policy, store=store, agent_id="agent-local")
+
+@dmint.protected("database.update")
+def update_record(table: str, row_id: int, value: str):
+    return f"Updated {table} row {row_id} with {value}"
+
+# Retrieve the latest approved credential from SQLite
+records = store.list_records(limit=1)
+approved_record = records[0]
+
+# Retry execution using the approved assertion
+result = update_record("users", 42, "admin", approval_credential=approved_record.assertion)
+print("✓ Approved execution succeeded:", result)
+
+# Attempt to REPLAY the exact same credential:
+print("\nAttempting to replay consumed credential:")
+try:
+    update_record("users", 42, "admin", approval_credential=approved_record.assertion)
+except Exception as exc:
+    print("🔒 Replay blocked (fail-closed):", exc)
+```
+
+Output:
+```text
+✓ Approved execution succeeded: Updated users row 42 with admin
+
+Attempting to replay consumed credential:
+🔒 Replay blocked (fail-closed): AuthorizationError: DMT_APPROVAL_CONSUMED
+```
+
+---
+
+## What Just Happened?
+
+1. **Deterministic Evaluation**: `SELECT` ran instantly because `ALLOW` was declared in code.
+2. **Deterministic Interception**: `UPDATE` stopped before execution because `APPROVAL_REQUIRED` was triggered.
+3. **Exact Request Binding**: Approval was valid *only* for `row_id=42`. If the agent tried `row_id=99`, it would fail immediately.
+4. **Single-Use Replay Defense**: Once executed, the assertion was atomically marked `CONSUMED`. Replaying the token failed closed.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MCP Gateway Setup" icon="network-wired" href="/guides/protecting-mcp">
+    Connect Dmint to Cursor, Claude Code, or Antigravity via MCP.
+  </Card>
+  <Card title="Agent Skills" icon="brain" href="/guides/agent-skills">
+    Install the AI policy-authoring skill into your workspace.
+  </Card>
+  <Card title="Security Invariants" icon="shield" href="/architecture/security-invariants">
+    Deep-dive into Dmint's 5 formal security invariants.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Explore all flags and options for `dmint-cli`.
+  </Card>
+</CardGroup>

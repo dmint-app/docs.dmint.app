@@ -1,0 +1,107 @@
+---
+title: "Policy Schema Specification"
+description: "Formal JSON schema, field definitions, and validation rules for policy.json files."
+icon: "file-code"
+---
+
+# Policy Schema Specification
+
+This document provides the formal specification for `policy.json` documents used by Dmint Core.
+
+---
+
+## JSON Structure Overview
+
+```json
+{
+  "$schema": "https://dmint.app/schemas/policy-v1.json",
+  "policy_version": 1,
+  "name": "Production Enforcement Policy",
+  "description": "Rules governing autonomous agent tool calls in production.",
+  "rules": [
+    {
+      "effect": "allow",
+      "tool": "postgres",
+      "action": "select",
+      "resource": "public.*"
+    }
+  ]
+}
+```
+
+---
+
+## Top-Level Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `policy_version` | integer | **Yes** | Schema version identifier. Must equal `1`. |
+| `rules` | array | **Yes** | Non-empty array of rule objects evaluated in sequential order. |
+| `name` | string | No | Human-readable name for the policy. |
+| `description` | string | No | Explanatory context or version notes. |
+
+---
+
+## Rule Object Fields
+
+Each element of the `rules` array must conform to this schema:
+
+| Field | Type | Required | Valid Values / Constraints |
+|---|---|---|---|
+| `effect` | string | **Yes** | Must be one of: `"allow"`, `"deny"`, `"approval_required"`. |
+| `tool` | string | **Yes** | Namespace identifier for the tool (e.g. `"postgres"`, `"fs"`). No whitespace. |
+| `action` | string | **Yes** | Operation name (e.g. `"query"`, `"read_file"`, `"execute"`). |
+| `resource` | string | **Yes** | Resource target, wildcard (`"*"`), or glob pattern. |
+
+---
+
+## JSON Schema (Draft 2020-12)
+
+```json title="policy-v1.schema.json"
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DmintPolicy",
+  "type": "object",
+  "required": ["policy_version", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "policy_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["effect", "tool", "action", "resource"],
+        "additionalProperties": false,
+        "properties": {
+          "effect": {
+            "type": "string",
+            "enum": ["allow", "deny", "approval_required"]
+          },
+          "tool": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
+```

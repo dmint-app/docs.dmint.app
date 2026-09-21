@@ -1,0 +1,128 @@
+---
+title: "Policies & Rules"
+description: "How Dmint evaluates rules, enforces fail-closed defaults, and guarantees deterministic execution."
+icon: "file-code"
+---
+
+# Policies & Rules
+
+In Dmint, a **policy** is a static, declarative JSON document specifying the exact authorization boundaries for AI tool calls.
+
+Policies are authored at development time, validated offline against strict schemas, and loaded into Core at runtime.
+
+---
+
+## The Policy Schema (`policy.json`)
+
+Here is an example production policy:
+
+```json title="policy.json"
+{
+  "policy_version": 1,
+  "name": "Production Database & Filesystem Policy",
+  "rules": [
+    {
+      "effect": "allow",
+      "tool": "postgres",
+      "action": "select",
+      "resource": "public.*"
+    },
+    {
+      "effect": "approval_required",
+      "tool": "postgres",
+      "action": "update",
+      "resource": "public.users"
+    },
+    {
+      "effect": "deny",
+      "tool": "postgres",
+      "action": "drop",
+      "resource": "*"
+    },
+    {
+      "effect": "allow",
+      "tool": "filesystem",
+      "action": "read",
+      "resource": "/var/log/*"
+    },
+    {
+      "effect": "deny",
+      "tool": "filesystem",
+      "action": "write",
+      "resource": "/etc/*"
+    }
+  ]
+}
+```
+
+---
+
+## Rule Effects
+
+Every rule must declare one of three effects:
+
+| Effect | Runtime Behavior |
+|---|---|
+| **`allow`** | The capability is permitted. The tool executes immediately with zero human friction or latency. |
+| **`approval_required`** | Execution halts. Dmint persists the exact request fingerprint in SQLite and raises `DMT_APPROVAL_REQUIRED`. Execution resumes only after a signed human assertion is presented. |
+| **`deny`** | The capability is explicitly forbidden. Execution halts immediately and raises `DMT_POLICY_DENIED`. |
+
+---
+
+## Evaluation Invariants
+
+When evaluating an incoming request:
+
+### 1. Fail-Closed Default
+If an agent requests an action that does not match any rule in `policy.json`, Dmint **fails closed**:
+```text
+Decision: DENY
+Reason: No matching rule found for tool='redis', action='flushall', resource='*'
+```
+There is no ambient or implicit permission. Everything must be explicitly declared.
+
+### 2. First-Match Determinism
+Rules are evaluated sequentially in the order they appear in `policy.json`. The first rule whose `(tool, action, resource)` matches the requested capability determines the decision.
+
+<Tip>
+Place specific rules (e.g. `action="drop"`, `resource="users"`) **before** broader wildcard rules (e.g. `resource="*"`).
+</Tip>
+
+---
+
+## Offline Validation (LLM-Free)
+
+Before deploying a policy to production, always verify its syntactic and semantic integrity using `dmint-cli`:
+
+```bash
+dmint verify-policy policy.json
+```
+
+The verification command checks:
+- JSON syntax and schema compliance
+- Presence of required fields (`policy_version`, `rules`, `effect`, `tool`, `action`)
+- Absence of unknown keys or invalid effect values
+- Maximum safe size limits to prevent resource exhaustion
+
+If valid, it outputs a human-readable summary and exits with code `0`:
+```text
+✓ Verified policy.json: 5 rule(s)
+  [ALLOW] tool='postgres', action='select', resource='public.*'
+  [APPROVAL_REQUIRED] tool='postgres', action='update', resource='public.users'
+  [DENY] tool='postgres', action='drop', resource='*'
+  [ALLOW] tool='filesystem', action='read', resource='/var/log/*'
+  [DENY] tool='filesystem', action='write', resource='/etc/*'
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authoring Policies Guide" icon="wand-magic-sparkles" href="/guides/authoring-policies">
+    Use the interactive CLI wizard to convert natural language into policy.json.
+  </Card>
+  <Card title="Policy Schema Reference" icon="list" href="/reference/policy-schema">
+    Inspect the formal JSON schema and validation constraints.
+  </Card>
+</CardGroup>

@@ -1,0 +1,156 @@
+---
+title: "Direct Python Integration"
+description: "How to protect backend functions, service APIs, and agent loops using the @dmint.protected decorator."
+icon: "python"
+---
+
+# Direct Python Integration
+
+For custom agent backends, FastAPI services, or Python tool suites, Dmint provides in-process protection via the `@dmint.protected` decorator and programmatic authorization APIs.
+
+---
+
+## 1. Setup & Initialization
+
+Install `dmint` in your environment:
+
+```bash
+pip install dmint
+```
+
+Initialize your approval store and policy:
+
+```python title="security.py"
+from pathlib import Path
+from dmint import Dmint, Policy, SQLiteApprovalStore
+
+# Initialize persistent SQLite store
+store = SQLiteApprovalStore("./approvals.sqlite3", deployment_epoch="prod-v1")
+
+# Load compiled policy
+policy = Policy.from_file(Path("policy.json"))
+
+# Create Dmint instance bound to this agent identity
+dmint = Dmint(
+    policy=policy,
+    store=store,
+    agent_id="agent-backend-service",
+)
+```
+
+---
+
+## 2. The `@dmint.protected` Decorator
+
+Decorate any Python function with a capability identifier in the format `tool.action`:
+
+```python title="tools.py"
+from security import dmint
+
+@dmint.protected("database.select")
+def query_users(role: str):
+    """Permitted by ALLOW rule — runs immediately."""
+    return [{"id": 1, "name": "Alice", "role": role}]
+
+@dmint.protected("database.update")
+def set_user_role(user_id: int, new_role: str):
+    """Triggers APPROVAL_REQUIRED — halts and persists request."""
+    return f"User {user_id} updated to {new_role}"
+
+@dmint.protected("database.drop")
+def drop_database():
+    """Triggers DENY — halts immediately."""
+    return "Database dropped"
+```
+
+---
+
+## 3. Handling Interception & Retries
+
+When a function requires approval, Dmint halts execution and raises `AuthorizationError`:
+
+```python title="agent_loop.py"
+from dmint.errors import AuthorizationError
+from tools import set_user_role
+
+try:
+    # 1. Attempt privileged action
+    set_user_role(user_id=42, new_role="admin")
+except AuthorizationError as exc:
+    # Check error code: DMT_APPROVAL_REQUIRED
+    print(f"Action paused: {exc}")
+    # The request is now recorded as PENDING in SQLite.
+```
+
+Once approved by a human (via `dmint dashboard`), the agent retrieves the approved assertion and passes it as `approval_credential`:
+
+```python
+# 2. Retrieve approved record from store
+pending_records = store.list_records(state="approved", limit=1)
+assertion = pending_records[0].assertion
+
+# 3. Retry function call with signed credential
+result = set_user_role(
+    user_id=42,
+    new_role="admin",
+    approval_credential=assertion,
+)
+print("Execution complete:", result)
+```
+
+---
+
+## 4. Programmatic Authorization (`dmint.authorize`)
+
+If you prefer explicit control without decorators:
+
+```python
+from dmint import ToolRequest
+
+# Construct request
+request = ToolRequest(
+    tool="payment_gateway",
+    action="refund",
+    resource="order_12345",
+    arguments={"amount_usd": 150.00, "reason": "damaged_goods"},
+)
+
+# Evaluate authorization
+decision = dmint.authorize(request)
+
+if decision.is_allowed:
+    # Execute immediately
+    process_refund(request.arguments)
+elif decision.requires_approval:
+    # Record approval and notify human
+    record = store.require_pending(request, policy_digest=dmint.policy_digest)
+    print(f"Approval needed: request_id={record.request_id}")
+else:
+    # Fail closed
+    raise PermissionError("Action denied by policy")
+```
+
+---
+
+## 5. Thread-Safe Web Framework Integration (FastAPI)
+
+When running inside multi-threaded web applications like FastAPI or Uvicorn, each worker thread accesses SQLite cleanly. Core's `SQLiteApprovalStore` handles transactional isolation and connection pooling safely.
+
+```python title="main.py"
+from fastapi import FastAPI, HTTPException
+from security import dmint, store
+from tools import set_user_role
+
+app = FastAPI()
+
+@app.post("/users/{user_id}/role")
+def change_role(user_id: int, role: str, approval_token: str | None = None):
+    try:
+        return set_user_role(
+            user_id=user_id,
+            new_role=role,
+            approval_credential=approval_token,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+```

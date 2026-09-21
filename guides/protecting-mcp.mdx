@@ -1,0 +1,167 @@
+---
+title: "Protecting MCP Servers"
+description: "How to use dmint-mcp as a deterministic security gateway and proxy for Model Context Protocol tools."
+icon: "network-wired"
+---
+
+# Protecting MCP Servers with `dmint-mcp`
+
+The **Model Context Protocol (MCP)** allows AI agents to discover and invoke tools. However, native MCP servers execute any tool call an agent makes without pre-execution authorization.
+
+`dmint-mcp` operates as a transparent security gateway and proxy between the AI agent and your downstream MCP servers:
+
+```text
+┌─────────────────┐
+│ AI Client/Agent │ (Cursor, Claude Code, Antigravity)
+└────────┬────────┘
+         │ JSON-RPC (tools/list, tools/call)
+         ▼
+┌─────────────────────────────────┐
+│         dmint-mcp Gateway       │
+│                                 │
+│  ├─ tools/list Aggregation      │
+│  ├─ SSRF & IP Validation        │
+│  ├─ Deterministic Policy Check  │
+│  └─ Core Approval Verification  │
+└────────┬────────────────────────┘
+         │ Authorized calls only
+         ▼
+┌─────────────────────────────────┐
+│ Downstream Server(s)            │ (Postgres, Filesystem, Remote APIs)
+└─────────────────────────────────┘
+```
+
+---
+
+## Supported Transports
+
+1. **`stdio`**: Local commands executed as subprocesses (e.g. `npx @modelcontextprotocol/server-postgres`, `uvx mcp-server-git`).
+2. **`streamable-http`**: Remote MCP endpoints with automatic SSRF filtering, loopback protection, and Bearer authentication.
+
+---
+
+## Step 1: Discover Tools & Generate Config
+
+Instead of writing protection configs by hand, use `dmint-cli` to inspect your downstream server and generate both `policy.json` and `mcp_protection.json`:
+
+<Tabs>
+  <Tab title="stdio (Local Command)">
+    ```bash
+    dmint create-mcp-policy \
+      --command npx \
+      --args "-y @modelcontextprotocol/server-postgres postgresql://localhost/mydb" \
+      --integration-id postgres \
+      -f access.md \
+      -o policy.json \
+      --config-output mcp_protection.json \
+      --non-interactive -y
+    ```
+  </Tab>
+
+  <Tab title="streamable-http (Remote URL)">
+    ```bash
+    dmint create-mcp-policy \
+      --url https://mcp.internal.company.com/v1 \
+      --integration-id analytics \
+      -f access.md \
+      -o policy.json \
+      --config-output mcp_protection.json \
+      --non-interactive -y
+    ```
+  </Tab>
+</Tabs>
+
+This generates `mcp_protection.json`:
+
+```json title="mcp_protection.json"
+{
+  "version": 1,
+  "integrations": [
+    {
+      "integration_id": "postgres",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
+      "tools": [
+        {
+          "mcp_tool_name": "query",
+          "action": "select",
+          "resource": "database.tables"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Step 2: Run the `dmint-mcp` Gateway
+
+Launch the proxy pointing to your Core-owned SQLite database and protection configuration:
+
+```bash
+python -m dmint_mcp run \
+  --config mcp_protection.json \
+  --policy policy.json \
+  --db-path ./approvals.sqlite3
+```
+
+The gateway exposes a clean MCP interface over `stdio` or HTTP that your AI editor can connect to directly.
+
+---
+
+## Multi-Server Gateway Aggregation
+
+You can protect multiple MCP servers behind a single `dmint-mcp` gateway:
+
+```json title="Multi-Server mcp_protection.json"
+{
+  "version": 1,
+  "integrations": [
+    {
+      "integration_id": "db_prod",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://prod/db"]
+    },
+    {
+      "integration_id": "fs",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+    },
+    {
+      "integration_id": "cloud_api",
+      "transport": "streamable-http",
+      "url": "https://api.internal.corp/mcp"
+    }
+  ]
+}
+```
+
+When an agent requests `tools/list`, `dmint-mcp`:
+1. Queries each downstream server.
+2. Namespaces tool names deterministically (e.g. `db_prod_query`, `fs_read_file`).
+3. Strips sensitive internal backend URLs or credentials from error messages.
+
+---
+
+## Built-in Security Defenses
+
+- **SSRF Protection**: Remote streamable HTTP endpoints validate IPs using `ipaddress` parsing. Requests to loopback (`127.0.0.1`, `::1`), private subnets, or cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`) are blocked fail-closed.
+- **Error Sanitization**: Downstream database stack traces or raw connection strings are intercepted and replaced with safe, sanitized error envelopes.
+- **Deterministic Timeout Controls**: Downstream MCP calls that hang or freeze are safely terminated after a strict timeout.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cursor Integration" icon="laptop-code" href="/integrations/cursor">
+    Configure Cursor to use dmint-mcp via .cursor/mcp.json.
+  </Card>
+  <Card title="Claude Code Integration" icon="terminal" href="/integrations/claude-code">
+    Configure Claude Code to route tools through dmint-mcp.
+  </Card>
+</CardGroup>

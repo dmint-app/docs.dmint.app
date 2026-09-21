@@ -1,0 +1,127 @@
+---
+title: "CLI Command Reference"
+description: "Comprehensive command-line interface documentation for dmint-cli."
+icon: "terminal"
+---
+
+# `dmint` Command-Line Reference
+
+The `dmint` CLI provides developer tooling for policy authoring, validation, skill installation, and dashboard execution.
+
+```bash
+dmint [command] [options]
+```
+
+---
+
+## Global Options
+
+| Flag | Description |
+|---|---|
+| `-h`, `--help` | Display help text and available commands. |
+| `-V`, `--version` | Display the installed `dmint-cli` version. |
+
+---
+
+## `dmint create-policy`
+
+Interactive wizard to convert natural language requirements into a verified `policy.json`.
+
+```bash
+dmint create-policy [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `-f`, `--file` | None | Path to input requirements file (e.g. `access.md`). |
+| `-o`, `--output` | `policy.json` | Path to destination policy JSON file. |
+| `-provider`, `--provider` | `openai` | LLM provider: `openai`, `gemini`, `groq`, `openrouter`, `ollama`. |
+| `-model`, `--model` | Provider default | Specific model name (e.g. `gpt-4o-mini`, `gemini-1.5-flash`). |
+| `-api_key`, `--api-key` | Env var | API key (or set `OPENAI_API_KEY`, `GEMINI_API_KEY`). |
+| `--non-interactive` | `False` | Run in non-interactive batch mode. |
+| `-y`, `--yes` | `False` | Automatically accept generated policy without confirmation. |
+| `--timeout` | `60.0` | API request timeout in seconds. |
+
+---
+
+## `dmint create-mcp-policy`
+
+Specialized wizard for Model Context Protocol servers: connects to the server, queries `tools/list`, and generates both `policy.json` and `mcp_protection.json`.
+
+```bash
+dmint create-mcp-policy [options]
+```
+
+### Options
+
+| Flag | Description |
+|---|---|
+| `--integration-id` | **Required**. Unique namespace identifier for this tool integration. |
+| `--command` | Executable command for stdio servers (e.g. `npx`, `uvx`, `python`). |
+| `--args` | Arguments string for the stdio command. |
+| `--url` | Remote URL for streamable-http MCP endpoints. |
+| `-f`, `--file` | Path to requirements file (e.g. `access.md`). |
+| `-o`, `--output` | Destination policy file (default: `policy.json`). |
+| `--config-output` | Destination protection config (default: `mcp_protection.json`). |
+| `--non-interactive` | Skip interactive prompt dialogues. |
+| `-y`, `--yes` | Automatically accept generated configuration. |
+
+---
+
+## `dmint verify-policy`
+
+100% offline, deterministic validation of a `policy.json` file against Dmint schema and security invariants. Zero network calls; no LLM.
+
+```bash
+dmint verify-policy <policy.json>
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Policy is valid and compliant. |
+| `1` | Schema violation, unknown keys, or invalid effect values. |
+| `2` | Missing argument or unreadable input file. |
+
+---
+
+## `dmint install-skill`
+
+Installs the official `dmint-policy-manager` AI coding agent skill for Antigravity, Claude Code, Cursor, and Gemini CLI.
+
+```bash
+dmint install-skill [options]
+```
+
+### Options
+
+| Flag | Description |
+|---|---|
+| `-y`, `--yes` | Non-interactive install to default `.agents/skills/`. |
+| `--dest`, `--target` | Install to a specific custom directory. |
+| `--global` | Install globally to `~/.gemini/config/skills/`. |
+| `--claude` | Install globally to `~/.claude/skills/`. |
+
+---
+
+## `dmint dashboard`
+
+Launches the local human approval web dashboard connected to Core-owned SQLite.
+
+```bash
+dmint dashboard [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db-path` | `DMINT_DB_PATH` | **Required**. Path to the Core SQLite database file. |
+| `--host` | `127.0.0.1` | Local bind host. |
+| `--port` | `8080` | Local bind port. |
+| `--deployment-epoch` | `default` | Deployment epoch matching running Core. |
+| `--authority-issuer` | `dmint-dashboard` | Issuer identifier for signed approvals. |
+| `--approver-id` | `dashboard-human` | Human approver identifier stamped on records. |

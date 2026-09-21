@@ -1,0 +1,83 @@
+---
+title: "MCP Protection Schema"
+description: "Configuration specification for mcp_protection.json used by the dmint-mcp gateway."
+icon: "network-wired"
+---
+
+# MCP Protection Schema Specification
+
+The `mcp_protection.json` file configures how the `dmint-mcp` gateway connects to downstream servers, binds MCP tools to Dmint capabilities, and manages protocol routing.
+
+---
+
+## Configuration Example
+
+```json title="mcp_protection.json"
+{
+  "version": 1,
+  "gateway": {
+    "discovery_mode": "transparent",
+    "request_timeout_seconds": 30.0
+  },
+  "integrations": [
+    {
+      "integration_id": "postgres",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
+      "tools": [
+        {
+          "mcp_tool_name": "query",
+          "action": "query",
+          "resource": "database.tables"
+        }
+      ]
+    },
+    {
+      "integration_id": "cloud_service",
+      "transport": "streamable-http",
+      "url": "https://api.internal.company.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CLOUD_MCP_TOKEN}"
+      }
+    }
+  ]
+}
+```
+
+---
+
+## Top-Level Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `version` | integer | **Yes** | Schema version. Must be `1`. |
+| `integrations` | array | **Yes** | List of downstream MCP server configurations. |
+| `gateway` | object | No | Global gateway settings (timeouts, discovery modes). |
+
+---
+
+## Integration Object Fields
+
+Each element in the `integrations` array defines one downstream server:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `integration_id` | string | **Yes** | Unique alphanumeric identifier for this server. |
+| `transport` | string | **Yes** | Must be `"stdio"` or `"streamable-http"`. |
+| `command` | string | stdio only | Executable binary or CLI launcher (e.g. `"npx"`, `"uvx"`). |
+| `args` | array | No | Command-line arguments array. |
+| `env` | object | No | Subprocess environment variable overrides. |
+| `url` | string | HTTP only | HTTPS URL to the remote MCP endpoint. |
+| `headers` | object | No | HTTP request headers (supports `${ENV_VAR}` expansion). |
+| `tools` | array | No | Explicit capability mapping rules for tools. |
+
+---
+
+## Tool Binding Object Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mcp_tool_name` | string | **Yes** | Raw tool name as published by downstream server. |
+| `action` | string | **Yes** | Dmint capability action name to evaluate in policy. |
+| `resource` | string | **Yes** | Resource target identifier or wildcard. |

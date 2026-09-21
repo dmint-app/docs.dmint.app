@@ -1,0 +1,107 @@
+---
+title: "Approvals & Lifecycle"
+description: "How human approval assertions are requested, signed via Ed25519, verified, and atomically consumed."
+icon: "stamp"
+---
+
+# Approval Lifecycle & State Machine
+
+When an AI agent requests an action governed by an `APPROVAL_REQUIRED` rule, Dmint intercepts the execution and initiates the **Approval Lifecycle**.
+
+```text
+       ┌───────────┐
+       │  PENDING  │  (Tool request persisted in SQLite)
+       └─────┬─────┘
+             │
+      ┌──────┴──────┐
+      │             │
+      ▼             ▼
+┌───────────┐ ┌───────────┐
+│ APPROVED  │ │ REJECTED  │  (Human reviews in Dashboard)
+└─────┬─────┘ └───────────┘
+      │
+      ▼
+┌───────────┐
+│ CONSUMED  │ (Agent retries with credential; tool executes)
+└───────────┘
+```
+
+---
+
+## The 5 Approval States
+
+1. **`PENDING`**: The agent has initiated the call. Dmint stopped execution before calling downstream logic and stored the exact request envelope in Core SQLite.
+2. **`APPROVED`**: An authorized authority (such as a human in `dmint dashboard` or an administrative script) inspected the payload and generated an Ed25519 signature.
+3. **`REJECTED`**: The reviewer explicitly denied the request. Any subsequent retry with this request ID will fail closed.
+4. **`CONSUMED`**: The approved assertion was submitted, verified, and used to execute the underlying tool. The assertion is now permanently invalidated and cannot be replayed.
+5. **`EXPIRED`**: The assertion exceeded its configured time-to-live (`expires_at`) before being executed.
+
+---
+
+## The Approval Assertion
+
+When a human clicks **Approve** in the dashboard, Dmint's `LocalApprovalAuthority` issues a signed cryptographic assertion:
+
+```json title="Approval Assertion Envelope"
+{
+  "version": 1,
+  "approval_id": "appr_01j7v0q...",
+  "request_id": "req_01j7v0p...",
+  "request_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "policy_digest": "4a7d1ed414474e4033ac29ccb8653d9b",
+  "authority": {
+    "issuer": "dmint-dashboard",
+    "audience": "dmint/dashboard/v1",
+    "algorithm": "ed25519",
+    "public_key": "base64_encoded_key..."
+  },
+  "issued_at": 1726910000,
+  "expires_at": 1726910300,
+  "signature": "base64_signature..."
+}
+```
+
+### Critical Security Fields
+- **`request_fingerprint`**: Ensures the approval is valid *only* for the exact arguments that the human saw on screen.
+- **`policy_digest`**: Contains the SHA-256 digest of `policy.json` at the time of approval. If someone alters the policy file before the agent executes, the approval is automatically invalidated.
+- **`signature`**: Cryptographic Ed25519 signature over the canonical assertion payload. Cannot be forged.
+
+---
+
+## Atomic Single-Use Consumption
+
+To prevent **Replay Attacks** (where an attacker or runaway agent captures an approved credential and uses it multiple times), Dmint enforces atomic consumption:
+
+```python
+# During tool retry:
+store.consume_approved(
+    approval_id="appr_01j7v0q...",
+    request_fingerprint="e3b0c442...",
+    policy_digest="4a7d1ed4..."
+)
+```
+
+Inside Core's SQLite store, this runs inside an atomic transaction:
+```sql
+UPDATE approvals 
+SET state = 'consumed', consumed_at = ? 
+WHERE approval_id = ? AND state = 'approved';
+```
+
+If another thread or process attempts to use the same `approval_id` concurrently or sequentially, the update affects 0 rows, and Core raises:
+```text
+AuthorizationError: DMT_APPROVAL_CONSUMED
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Human Approvals Guide" icon="window-maximize" href="/guides/human-approvals">
+    Learn how to launch and configure the local web approval dashboard.
+  </Card>
+  <Card title="Security Invariants" icon="shield" href="/architecture/security-invariants">
+    Review the formal proof and test matrix behind single-use assertions.
+  </Card>
+</CardGroup>

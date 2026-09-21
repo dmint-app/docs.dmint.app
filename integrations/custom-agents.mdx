@@ -1,0 +1,100 @@
+---
+title: "Custom Python Agents (LangChain, CrewAI, AutoGen)"
+description: "How to integrate Dmint authorization into LangChain, CrewAI, AutoGen, and custom agent loops."
+icon: "robot"
+---
+
+# Custom Python Agents & Frameworks
+
+If you build autonomous agents using **LangChain**, **CrewAI**, **AutoGen**, or a custom Python loop, you can integrate Dmint directly into your tool definitions.
+
+---
+
+## LangChain Integration
+
+Wrap LangChain's `@tool` functions with `@dmint.protected`:
+
+```python title="langchain_tools.py"
+from langchain_core.tools import tool
+from dmint import Dmint, Policy, SQLiteApprovalStore
+from dmint.errors import AuthorizationError
+
+# Initialize Dmint
+store = SQLiteApprovalStore("./approvals.sqlite3")
+policy = Policy.from_file("policy.json")
+dmint = Dmint(policy=policy, store=store, agent_id="langchain-agent")
+
+@tool
+@dmint.protected("system.execute_sql")
+def execute_sql(query: str) -> str:
+    """Execute a raw SQL query against the database."""
+    # This code only runs if Dmint evaluates ALLOW or valid approval credential is provided
+    return f"Executed SQL: {query}"
+```
+
+### Safe LangChain Tool Execution
+
+When an agent invokes a tool that requires human approval:
+
+```python
+try:
+    result = execute_sql.invoke({"query": "UPDATE accounts SET balance = 0 WHERE id = 1"})
+except AuthorizationError as exc:
+    # Tool paused fail-closed.
+    # The request is now visible in dmint dashboard.
+    print(f"Action intercepted: {exc}")
+```
+
+---
+
+## CrewAI Custom Tool Integration
+
+In CrewAI, inherit from `BaseTool` and protect the `_run` method:
+
+```python title="crewai_tools.py"
+from crewai.tools import BaseTool
+from dmint import Dmint, Policy, SQLiteApprovalStore
+
+store = SQLiteApprovalStore("./approvals.sqlite3")
+policy = Policy.from_file("policy.json")
+dmint = Dmint(policy=policy, store=store, agent_id="crewai-ops-agent")
+
+class ProtectedFileDeleteTool(BaseTool):
+    name: str = "delete_file"
+    description: str = "Deletes a file from the server."
+
+    def _run(self, file_path: str, approval_credential: str | None = None) -> str:
+        # Programmatic authorization check
+        decision = dmint.authorize("filesystem", "delete", file_path)
+        
+        if decision.requires_approval and not approval_credential:
+            record = store.require_pending(
+                request={"tool": "filesystem", "action": "delete", "resource": file_path},
+                policy_digest=dmint.policy_digest
+            )
+            return f"APPROVAL_REQUIRED: Action paused. Request ID is {record.request_id}."
+            
+        return f"Successfully deleted {file_path}"
+```
+
+---
+
+## Polling for Approval in Custom Loops
+
+If your agent runs as a daemon and needs to wait for human approval before resuming:
+
+```python title="agent_poller.py"
+import time
+from dmint import SQLiteApprovalStore
+
+def wait_for_human_approval(store: SQLiteApprovalStore, request_id: str, timeout_sec: int = 300):
+    start = time.time()
+    while time.time() - start < timeout_sec:
+        record = store.get(request_id)
+        if record and record.state == "approved":
+            return record.assertion
+        elif record and record.state == "rejected":
+            raise PermissionError("Human operator rejected the action.")
+        time.sleep(2)
+    raise TimeoutError("Approval request timed out.")
+```

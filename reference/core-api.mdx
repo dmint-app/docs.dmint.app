@@ -1,0 +1,124 @@
+---
+title: "Python Core API Reference"
+description: "Public classes, methods, and error codes in the dmint v1.0.1 core package."
+icon: "cube"
+---
+
+# Python Core API Reference (`dmint`)
+
+This page documents the public API exposed by the `dmint` v1.0.1 Python package.
+
+```python
+from dmint import (
+    Dmint,
+    Policy,
+    Rule,
+    ToolRequest,
+    SQLiteApprovalStore,
+    LocalApprovalAuthority,
+    ApprovalState,
+)
+```
+
+---
+
+## `Dmint`
+
+The primary authorization and execution orchestrator.
+
+### Constructor
+```python
+dmint = Dmint(
+    policy: Policy,
+    store: SQLiteApprovalStore | None = None,
+    agent_id: str = "default-agent",
+    deployment_epoch: str = "default",
+)
+```
+
+### Methods
+
+#### `@dmint.protected(capability: str)`
+Decorator that intercepts a Python function. Halts execution if the capability evaluates to `DENY` or `APPROVAL_REQUIRED`.
+```python
+@dmint.protected("database.update")
+def modify_user(id: int, name: str):
+    ...
+```
+
+#### `dmint.authorize(request: ToolRequest | tuple[str, str, str]) -> Decision`
+Evaluates a request against the active policy without executing code.
+Returns a `Decision` object with properties:
+- `decision.is_allowed: bool`
+- `decision.requires_approval: bool`
+- `decision.is_denied: bool`
+- `decision.effect: str`
+
+---
+
+## `Policy`
+
+Represents an immutable, validated authorization policy.
+
+### Static Methods
+```python
+# Load from file on disk:
+policy = Policy.from_file("policy.json")
+
+# Parse from Python dictionary:
+policy = Policy.from_mapping(data)
+```
+
+### Properties
+- `policy.rules`: List of `Rule` objects.
+- `policy.digest`: SHA-256 hex string representing the canonical digest of this policy.
+
+---
+
+## `SQLiteApprovalStore`
+
+The Core-owned SQLite database client managing approval lifecycles.
+
+### Constructor
+```python
+store = SQLiteApprovalStore(
+    db_path: str | Path,
+    deployment_epoch: str = "default",
+    timeout: float = 30.0,
+)
+```
+
+### Public Methods
+
+#### `store.list_pending(limit: int = 50, offset: int = 0) -> list[ApprovalRecord]`
+Returns pending approval records ordered chronologically.
+
+#### `store.list_records(state: str | None = None, limit: int = 50, offset: int = 0) -> list[ApprovalRecord]`
+Lists approval records filtered by state (`"pending"`, `"approved"`, `"consumed"`, `"rejected"`, `"expired"`).
+
+#### `store.get(id: str) -> ApprovalRecord | None`
+Retrieves a record by its `request_id` or `approval_id`.
+
+#### `store.approve_pending(request_id: str, authority: LocalApprovalAuthority, approver_id: str) -> ApprovalRecord`
+Transitions a pending record to `APPROVED` and generates an Ed25519 cryptographic assertion.
+
+#### `store.reject_pending(request_id: str, reason: str | None = None) -> ApprovalRecord`
+Transitions a pending record to `REJECTED`.
+
+#### `store.consume_approved(approval_id: str, request_fingerprint: str, policy_digest: str) -> ApprovalRecord`
+Atomically marks an approved assertion as `CONSUMED` during execution. Raises `DMT_APPROVAL_CONSUMED` if already used.
+
+---
+
+## Error Codes & Exceptions
+
+All authorization exceptions derive from `dmint.errors.AuthorizationError`:
+
+| Error Constant | Meaning |
+|---|---|
+| `DMT_POLICY_DENIED` | Action explicitly forbidden by policy rule or fail-closed default. |
+| `DMT_APPROVAL_REQUIRED` | Action is paused awaiting human approval. |
+| `DMT_APPROVAL_CONSUMED` | Attempted to replay an assertion that has already been executed. |
+| `DMT_APPROVAL_EXPIRED` | Assertion timestamp exceeded time-to-live. |
+| `DMT_REQUEST_MISMATCH` | Runtime arguments do not match the approved request fingerprint. |
+| `DMT_APPROVAL_POLICY_INVALID` | The policy file was modified after the approval was granted. |
