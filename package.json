@@ -1,0 +1,14 @@
+{
+  "name": "docs.dmint.app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Official Dmint documentation site",
+  "scripts": {
+    "dev": "mintlify dev",
+    "build": "mintlify export && unzip -o export.zip -d dist",
+    "validate": "mintlify validate"
+  },
+  "devDependencies": {
+    "mintlify": "^4.2.910"
+  }
+}
