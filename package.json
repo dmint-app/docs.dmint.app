@@ -2,13 +2,18 @@
   "name": "docs.dmint.app",
   "version": "1.0.0",
   "private": true,
-  "description": "Official Dmint documentation site",
+  "type": "module",
   "scripts": {
-    "dev": "mintlify dev",
-    "build": "mintlify export && unzip -o export.zip -d dist",
-    "validate": "mintlify validate"
+    "dev": "vite --port 3334",
+    "build": "vite build",
+    "start": "node dist/rsc/index.js"
+  },
+  "dependencies": {
+    "@holocron.so/vite": "^0.35.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "mintlify": "^4.2.910"
+    "vite": "^8.3.0"
   }
 }
