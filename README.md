@@ -23,16 +23,21 @@ Open your browser at **http://localhost:3334** to view the development site.
 
 ## Cloudflare Deployment
 
-This project is configured as a Cloudflare Worker in `wrangler.jsonc`. The Holocron build emits the Worker entry point to `dist/rsc/index.js` and browser assets to `dist/client`.
+This project is configured as a Cloudflare Worker in `wrangler.jsonc`. The Holocron build emits the Worker entry point to `dist/.holocron/rsc/index.js` and browser assets to `dist/.holocron/client`.
 
-After authenticating Wrangler with the Cloudflare account that owns the Worker, build and deploy with:
+For Cloudflare's connected Git deployment, use:
+
+- **Build command:** `npm run build`
+- **Deploy command:** `npx wrangler deploy`
+
+For a local deployment after authenticating Wrangler:
 
 ```bash
 npx wrangler login
 npm run deploy
 ```
 
-The `workers_dev` URL and the configured custom domain are both served by the same deployment. If the Worker returns a root 404, verify that the build completed and that `dist/rsc/index.js` and `dist/client` exist before deploying.
+The `workers_dev` URL and the configured custom domain are both served by the same deployment. If deployment reports that the entry point is missing, confirm that the build step ran first and that `dist/.holocron/rsc/index.js` exists before invoking Wrangler.
 
 ## Repository Structure
 
