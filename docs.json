@@ -99,5 +99,10 @@
       "github": "https://github.com/dmint-app",
       "x": "https://x.com/dmint_app"
     }
+  },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-W7EBSH066H"
+    }
   }
 }
