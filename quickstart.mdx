@@ -77,12 +77,26 @@ Choose how you want to connect Dmint to your project:
     Create `app.py`:
 
     ```python title="app.py"
-    from dmint import Dmint, Policy, SQLiteApprovalStore
+    import json
+    from datetime import datetime, timezone, timedelta
+    from dmint import Dmint, Policy, SQLiteApprovalStore, PolicyProvenance, policy_digest
+    from dmint.models import TrustedContext
 
-    # 1. Initialize store and policy
-    store = SQLiteApprovalStore("./approvals.sqlite3")
-    policy = Policy.from_file("policy.json")
-    dmint = Dmint(policy=policy, store=store, agent_id="agent-local")
+    # 1. Initialize store with deployment_epoch and load policy mapping
+    store = SQLiteApprovalStore("./approvals.sqlite3", deployment_epoch="prod-v1")
+    with open("policy.json", "r", encoding="utf-8") as f:
+        policy = Policy.from_mapping(json.load(f))
+
+    provenance = PolicyProvenance("prod-v1", policy_digest(policy), datetime.now(timezone.utc))
+
+    dmint = Dmint(
+        policy=policy,
+        approval_store=store,
+        context=TrustedContext({}),
+        agent_id="agent-local",
+        approval_ttl=timedelta(minutes=15),
+        policy_provenance=provenance,
+    )
 
     # 2. Protect functions with capabilities: tool.action
     @dmint.protected("database.select")
@@ -111,6 +125,10 @@ Choose how you want to connect Dmint to your project:
         print("   -> Request persisted in ./approvals.sqlite3 awaiting approval.")
     ```
 
+    <Warning>
+    **RFC 8785 Strict Numeric Canonicalization**: Dmint enforces RFC 8785 canonicalization for cryptographic request fingerprints. Whole numeric values must be passed as integers (`42`), not integer-valued floats (`42.0`), which are rejected to eliminate cross-platform float ambiguity.
+    </Warning>
+
     Run the script:
 
     ```bash
@@ -135,8 +153,13 @@ Choose how you want to connect Dmint to your project:
 
     2. Run the secure gateway:
        ```bash
-       python -m dmint_mcp run --config mcp_protection.json --db-path ./approvals.sqlite3
+       dmint-mcp run --config mcp_protection.json
+       # or: python -m dmint_mcp run --config mcp_protection.json
        ```
+
+       <Note>
+       The gateway's policy path (`policy_file`), approval database (`approval_db`), and expiration (`approval_ttl`) are configured inside `mcp_protection.json`.
+       </Note>
   </Tab>
 </Tabs>
 
@@ -168,28 +191,64 @@ Open your browser at **[http://127.0.0.1:8080](http://127.0.0.1:8080)**:
 Now that the request has been approved, re-run or retry the action with the approval credential:
 
 ```python title="retry.py"
-from dmint import Dmint, Policy, SQLiteApprovalStore
+import json
+from datetime import datetime, timezone, timedelta
+from dmint import (
+    Dmint,
+    Policy,
+    SQLiteApprovalStore,
+    PolicyProvenance,
+    policy_digest,
+    ApprovalVerifier,
+)
+from dmint.models import TrustedContext
 
-store = SQLiteApprovalStore("./approvals.sqlite3")
-policy = Policy.from_file("policy.json")
-dmint = Dmint(policy=policy, store=store, agent_id="agent-local")
+store = SQLiteApprovalStore("./approvals.sqlite3", deployment_epoch="prod-v1")
+with open("policy.json", "r", encoding="utf-8") as f:
+    policy = Policy.from_mapping(json.load(f))
+
+provenance = PolicyProvenance("prod-v1", policy_digest(policy), datetime.now(timezone.utc))
+
+# Configure verifier with your trusted approval authority's public key
+verifier = ApprovalVerifier(
+    trusted_issuers={"dashboard-admin": authority_public_key},
+    audience="local-runtime",
+)
+
+dmint = Dmint(
+    policy=policy,
+    approval_store=store,
+    context=TrustedContext({}),
+    agent_id="agent-local",
+    approval_ttl=timedelta(minutes=15),
+    policy_provenance=provenance,
+    approval_verifier=verifier,
+)
 
 @dmint.protected("database.update")
 def update_record(table: str, row_id: int, value: str):
     return f"Updated {table} row {row_id} with {value}"
 
-# Retrieve the latest approved credential from SQLite
-records = store.list_records(limit=1)
-approved_record = records[0]
-
-# Retry execution using the approved assertion
-result = update_record("users", 42, "admin", approval_credential=approved_record.assertion)
+# Retry execution using dmint.retry() passing the signed approval assertion
+result = dmint.retry(
+    update_record,
+    "users",
+    42,
+    "admin",
+    approval_credential=approved_assertion,
+)
 print("✓ Approved execution succeeded:", result)
 
 # Attempt to REPLAY the exact same credential:
 print("\nAttempting to replay consumed credential:")
 try:
-    update_record("users", 42, "admin", approval_credential=approved_record.assertion)
+    dmint.retry(
+        update_record,
+        "users",
+        42,
+        "admin",
+        approval_credential=approved_assertion,
+    )
 except Exception as exc:
     print("🔒 Replay blocked (fail-closed):", exc)
 ```
@@ -199,7 +258,7 @@ Output:
 ✓ Approved execution succeeded: Updated users row 42 with admin
 
 Attempting to replay consumed credential:
-🔒 Replay blocked (fail-closed): AuthorizationError: DMT_APPROVAL_CONSUMED
+🔒 Replay blocked (fail-closed): approval has already been consumed
 ```
 
 ---

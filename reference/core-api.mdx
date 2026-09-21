@@ -28,11 +28,19 @@ The primary authorization and execution orchestrator.
 
 ### Constructor
 ```python
+from datetime import timedelta
+from dmint.models import TrustedContext
+
 dmint = Dmint(
     policy: Policy,
-    store: SQLiteApprovalStore | None = None,
-    agent_id: str = "default-agent",
-    deployment_epoch: str = "default",
+    *,
+    agent_id: str,
+    context: TrustedContext,
+    integration_id: str = "local-runtime",
+    approval_store: SQLiteApprovalStore | None = None,
+    approval_verifier: ApprovalVerifier | None = None,
+    policy_provenance: PolicyProvenance | None = None,
+    approval_ttl: timedelta | None = None,
 )
 ```
 
@@ -46,13 +54,22 @@ def modify_user(id: int, name: str):
     ...
 ```
 
-#### `dmint.authorize(request: ToolRequest | tuple[str, str, str]) -> Decision`
-Evaluates a request against the active policy without executing code.
-Returns a `Decision` object with properties:
-- `decision.is_allowed: bool`
-- `decision.requires_approval: bool`
-- `decision.is_denied: bool`
-- `decision.effect: str`
+#### `dmint.retry(function: Callable, *args, approval_credential: ApprovalAssertion | bytes, **kwargs) -> Any`
+Executes an approved retry for a previously intercepted function using a cryptographic approval assertion. Atomically consumes the approval in the store to enforce single-use replay defense.
+```python
+result = dmint.retry(
+    modify_user,
+    42,
+    "Alice",
+    approval_credential=assertion,
+)
+```
+
+#### `dmint.authorize(function: Callable, *args, capability: str, resource: ResourceSpec = NO_RESOURCE, **kwargs) -> AuthorizedRequest`
+Evaluates and pre-authorizes a callable with its arguments against the policy for the given capability. Returns an `AuthorizedRequest` token if permitted, raises `ApprovalRequiredError` if human approval is required (persisting a pending record to SQLite), or raises `AuthorizationError` if denied.
+
+#### `dmint.execute(authorized: AuthorizedRequest) -> Any`
+Executes an `AuthorizedRequest` token produced by `dmint.authorize()`.
 
 ---
 
@@ -62,15 +79,16 @@ Represents an immutable, validated authorization policy.
 
 ### Static Methods
 ```python
-# Load from file on disk:
-policy = Policy.from_file("policy.json")
+# Parse from Python dictionary (mapping containing {"rules": [...]})
+import json
+from dmint import Policy
 
-# Parse from Python dictionary:
-policy = Policy.from_mapping(data)
+with open("policy.json", "r", encoding="utf-8") as f:
+    policy = Policy.from_mapping(json.load(f))
 ```
 
 ### Properties
-- `policy.rules`: List of `Rule` objects.
+- `policy.rules`: Tuple of `Rule` objects.
 - `policy.digest`: SHA-256 hex string representing the canonical digest of this policy.
 
 ---
@@ -82,31 +100,45 @@ The Core-owned SQLite database client managing approval lifecycles.
 ### Constructor
 ```python
 store = SQLiteApprovalStore(
-    db_path: str | Path,
-    deployment_epoch: str = "default",
-    timeout: float = 30.0,
+    database: str | Path,
+    *,
+    deployment_epoch: str,
+    recovery_epoch_file: str | Path | None = None,
 )
 ```
 
+<Note>
+`deployment_epoch` participates in Core's rollback and recovery protection, tracking epoch state in a companion `.epoch` file (`<db_path>.epoch`) alongside the SQLite database to prevent rollback attacks.
+</Note>
+
 ### Public Methods
 
-#### `store.list_pending(limit: int = 50, offset: int = 0) -> list[ApprovalRecord]`
-Returns pending approval records ordered chronologically.
+#### `store.get_pending(approval_id: str) -> ApprovalRecord | None`
+Retrieves a pending approval record by its `approval_id`.
 
-#### `store.list_records(state: str | None = None, limit: int = 50, offset: int = 0) -> list[ApprovalRecord]`
-Lists approval records filtered by state (`"pending"`, `"approved"`, `"consumed"`, `"rejected"`, `"expired"`).
+#### `store.get_approved(approval_id: str) -> ApprovalRecord | None`
+Retrieves an approved approval record by its `approval_id`.
 
-#### `store.get(id: str) -> ApprovalRecord | None`
-Retrieves a record by its `request_id` or `approval_id`.
+#### `store.get(approval_id: str) -> ApprovalRecord | None`
+Retrieves an approval record (in any state) by its `approval_id`.
 
-#### `store.approve_pending(request_id: str, authority: LocalApprovalAuthority, approver_id: str) -> ApprovalRecord`
-Transitions a pending record to `APPROVED` and generates an Ed25519 cryptographic assertion.
+#### `store.require_pending(approval_id: str) -> ApprovalRecord`
+Retrieves a pending approval record, raising an error if not found or not in `PENDING` state.
 
-#### `store.reject_pending(request_id: str, reason: str | None = None) -> ApprovalRecord`
-Transitions a pending record to `REJECTED`.
+#### `store.save_approved(record: ApprovalRecord) -> None`
+Persists a transitioned `APPROVED` approval record to the store.
 
-#### `store.consume_approved(approval_id: str, request_fingerprint: str, policy_digest: str) -> ApprovalRecord`
-Atomically marks an approved assertion as `CONSUMED` during execution. Raises `DMT_APPROVAL_CONSUMED` if already used.
+#### `store.consume_approved(*, approval_id: str, credential: ApprovalAssertion | bytes, expected_request: ToolRequest, verifier: ApprovalVerifier, now: datetime | None = None) -> ApprovalRecord`
+Atomically verifies and transitions an approved record to `CONSUMED`. Core's `dmint.retry()` handles this automatically.
+
+#### `store.invalidate_approved(record: ApprovalRecord, *, reason: str, now: datetime | None = None) -> ApprovalRecord`
+Invalidates an approved record if policy provenance changes or conditions no longer hold.
+
+#### `store.cleanup_expired(*, now: datetime | None = None) -> int`
+Purges expired pending records from the database and returns the count of removed records.
+
+#### `store.close() -> None`
+Closes the underlying SQLite database connection cleanly.
 
 ---
 

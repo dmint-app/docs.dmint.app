@@ -58,15 +58,20 @@ dmint create-mcp-policy [options]
 
 | Flag | Description |
 |---|---|
-| `--integration-id` | **Required**. Unique namespace identifier for this tool integration. |
-| `--command` | Executable command for stdio servers (e.g. `npx`, `uvx`, `python`). |
-| `--args` | Arguments string for the stdio command. |
+| `--integration-id` | **Required / Recommended**. Unique namespace identifier for this tool integration (e.g. `postgres`, `ledger`). Always pass this explicitly when `--command` contains paths, binaries, or complex arguments. |
+| `--command` | Executable command for stdio servers (e.g. `npx`, `uvx`, `python`, `/path/to/venv/bin/python`). |
+| `--args` | Arguments array or string for the stdio command (e.g. `server.py`). |
+| `--transport` | Transport protocol: `stdio` (default) or `streamable-http`. |
 | `--url` | Remote URL for streamable-http MCP endpoints. |
-| `-f`, `--file` | Path to requirements file (e.g. `access.md`). |
+| `-f`, `--file` | Path to requirements file (default: `access.md`). |
 | `-o`, `--output` | Destination policy file (default: `policy.json`). |
 | `--config-output` | Destination protection config (default: `mcp_protection.json`). |
 | `--non-interactive` | Skip interactive prompt dialogues. |
 | `-y`, `--yes` | Automatically accept generated configuration. |
+
+<Note>
+**Capability Naming Compatibility**: In the current release, `dmint create-mcp-policy` outputs tool capabilities prefixed with `mcp.` (e.g. `"capability": "mcp.postgres.query"`). To ensure runtime policy matching against rules with `tool="postgres"`, ensure your `mcp_protection.json` capability is configured as `"<integration>.<action>"` (e.g. `"postgres.query"`).
+</Note>
 
 ---
 

@@ -43,11 +43,7 @@ In your project root, create or edit `.cursor/mcp.json`. Replace the raw tool co
         "dmint_mcp",
         "run",
         "--config",
-        "/absolute/path/to/mcp_protection.json",
-        "--policy",
-        "/absolute/path/to/policy.json",
-        "--db-path",
-        "/absolute/path/to/approvals.sqlite3"
+        "/absolute/path/to/mcp_protection.json"
       ]
     }
   }
@@ -55,7 +51,7 @@ In your project root, create or edit `.cursor/mcp.json`. Replace the raw tool co
 ```
 
 <Tip>
-Always use absolute paths in `.cursor/mcp.json` so Cursor can locate the configuration regardless of which subfolder is currently open.
+Always use absolute paths in `.cursor/mcp.json` so Cursor can locate the configuration regardless of which subfolder is currently open. The policy file (`policy_file`), approval database (`approval_db`), and TTL (`approval_ttl`) are defined inside `mcp_protection.json`.
 </Tip>
 
 ---

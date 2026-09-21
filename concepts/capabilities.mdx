@@ -92,18 +92,19 @@ Here is how common tool actions map to Dmint capabilities:
     ```json title="mcp_protection.json"
     {
       "integration_id": "github",
-      "tools": [
-        {
-          "mcp_tool_name": "create_issue",
-          "action": "create",
-          "resource": "issues"
+      "transport": "stdio",
+      "tool_bindings": {
+        "create_issue": {
+          "tool_name": "create_issue",
+          "capability": "github.create_issue",
+          "discovery": "exposed"
         },
-        {
-          "mcp_tool_name": "delete_repository",
-          "action": "delete",
-          "resource": "repositories"
+        "delete_repository": {
+          "tool_name": "delete_repository",
+          "capability": "github.delete_repository",
+          "discovery": "exposed"
         }
-      ]
+      }
     }
     ```
   </Tab>

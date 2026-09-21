@@ -30,11 +30,13 @@ Configure Claude Code to route downstream tools through the `dmint-mcp` gateway.
 Add the gateway to your Claude Code configuration:
 
 ```bash
-claude mcp add dmint-gateway -- python -m dmint_mcp run \
-  --config /path/to/mcp_protection.json \
-  --policy /path/to/policy.json \
-  --db-path /path/to/approvals.sqlite3
+claude mcp add dmint-gateway -- dmint-mcp run \
+  --config /path/to/mcp_protection.json
 ```
+
+<Note>
+The policy file (`policy_file`), approval database (`approval_db`), and TTL (`approval_ttl`) are configured inside `mcp_protection.json`.
+</Note>
 
 Alternatively, configure `~/.claude/config.json`:
 
@@ -48,11 +50,7 @@ Alternatively, configure `~/.claude/config.json`:
         "dmint_mcp",
         "run",
         "--config",
-        "/path/to/mcp_protection.json",
-        "--policy",
-        "/path/to/policy.json",
-        "--db-path",
-        "/path/to/approvals.sqlite3"
+        "/path/to/mcp_protection.json"
       ]
     }
   }

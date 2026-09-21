@@ -15,14 +15,25 @@ If you build autonomous agents using **LangChain**, **CrewAI**, **AutoGen**, or 
 Wrap LangChain's `@tool` functions with `@dmint.protected`:
 
 ```python title="langchain_tools.py"
+import json
+from datetime import timedelta
 from langchain_core.tools import tool
 from dmint import Dmint, Policy, SQLiteApprovalStore
+from dmint.models import TrustedContext
 from dmint.errors import AuthorizationError
 
 # Initialize Dmint
-store = SQLiteApprovalStore("./approvals.sqlite3")
-policy = Policy.from_file("policy.json")
-dmint = Dmint(policy=policy, store=store, agent_id="langchain-agent")
+store = SQLiteApprovalStore("./approvals.sqlite3", deployment_epoch="prod-v1")
+with open("policy.json", "r", encoding="utf-8") as f:
+    policy = Policy.from_mapping(json.load(f))
+
+dmint = Dmint(
+    policy=policy,
+    approval_store=store,
+    context=TrustedContext({}),
+    agent_id="langchain-agent",
+    approval_ttl=timedelta(minutes=15),
+)
 
 @tool
 @dmint.protected("system.execute_sql")
@@ -52,29 +63,39 @@ except AuthorizationError as exc:
 In CrewAI, inherit from `BaseTool` and protect the `_run` method:
 
 ```python title="crewai_tools.py"
+import json
+from datetime import timedelta
 from crewai.tools import BaseTool
-from dmint import Dmint, Policy, SQLiteApprovalStore
+from dmint import Dmint, Policy, SQLiteApprovalStore, ApprovalRequiredError, AuthorizationError
+from dmint.models import TrustedContext
 
-store = SQLiteApprovalStore("./approvals.sqlite3")
-policy = Policy.from_file("policy.json")
-dmint = Dmint(policy=policy, store=store, agent_id="crewai-ops-agent")
+store = SQLiteApprovalStore("./approvals.sqlite3", deployment_epoch="prod-v1")
+with open("policy.json", "r", encoding="utf-8") as f:
+    policy = Policy.from_mapping(json.load(f))
+
+dmint = Dmint(
+    policy=policy,
+    approval_store=store,
+    context=TrustedContext({}),
+    agent_id="crewai-ops-agent",
+    approval_ttl=timedelta(minutes=15),
+)
+
+@dmint.protected("filesystem.delete")
+def execute_file_delete(file_path: str) -> str:
+    return f"Successfully deleted {file_path}"
 
 class ProtectedFileDeleteTool(BaseTool):
     name: str = "delete_file"
     description: str = "Deletes a file from the server."
 
-    def _run(self, file_path: str, approval_credential: str | None = None) -> str:
-        # Programmatic authorization check
-        decision = dmint.authorize("filesystem", "delete", file_path)
-        
-        if decision.requires_approval and not approval_credential:
-            record = store.require_pending(
-                request={"tool": "filesystem", "action": "delete", "resource": file_path},
-                policy_digest=dmint.policy_digest
-            )
-            return f"APPROVAL_REQUIRED: Action paused. Request ID is {record.request_id}."
-            
-        return f"Successfully deleted {file_path}"
+    def _run(self, file_path: str) -> str:
+        try:
+            return execute_file_delete(file_path)
+        except ApprovalRequiredError as exc:
+            return f"APPROVAL_REQUIRED: Action paused. Approval ID is {exc.approval_id}."
+        except AuthorizationError as exc:
+            return f"DENIED: Action forbidden by policy: {exc}"
 ```
 
 ---
@@ -85,15 +106,15 @@ If your agent runs as a daemon and needs to wait for human approval before resum
 
 ```python title="agent_poller.py"
 import time
-from dmint import SQLiteApprovalStore
+from dmint import SQLiteApprovalStore, ApprovalRecord, ApprovalState
 
-def wait_for_human_approval(store: SQLiteApprovalStore, request_id: str, timeout_sec: int = 300):
+def wait_for_human_approval(store: SQLiteApprovalStore, approval_id: str, timeout_sec: int = 300) -> ApprovalRecord:
     start = time.time()
     while time.time() - start < timeout_sec:
-        record = store.get(request_id)
-        if record and record.state == "approved":
-            return record.assertion
-        elif record and record.state == "rejected":
+        record = store.get(approval_id)
+        if record and record.state == ApprovalState.APPROVED:
+            return record
+        elif record and record.state == ApprovalState.REJECTED:
             raise PermissionError("Human operator rejected the action.")
         time.sleep(2)
     raise TimeoutError("Approval request timed out.")
