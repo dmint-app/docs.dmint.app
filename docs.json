@@ -14,11 +14,11 @@
     }
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
+    "light": "/logo.svg",
+    "dark": "/logo.svg",
     "href": "https://dmint.app"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/logo.svg",
   "navbar": {
     "links": [
       {
