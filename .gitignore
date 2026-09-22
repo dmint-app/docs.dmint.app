@@ -4,4 +4,4 @@ node_modules/
 *.log
 export.zip
 dist/
-
+.wrangler/
