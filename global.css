@@ -3,7 +3,8 @@ img[src*="logo"],
 .dark img[src*="logo"],
 img[alt="Dmint"],
 img[alt="dmint"],
-.dark:invert {
+.dark [class*="invert"],
+[class*="dark:invert"] {
   filter: none !important;
 }
 
